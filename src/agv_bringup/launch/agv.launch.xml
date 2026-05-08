@@ -17,10 +17,15 @@
     <node pkg="controller_manager" exec="spawner" args="agvBase_controller" />
     <node pkg="controller_manager" exec="spawner" args="arm1_controller" />
     <node pkg="controller_manager" exec="spawner" args="arm2_controller" />
-    <node pkg="camera" exec="camera_node" />
+    
+    <!-- Camera Launch with TF -->
+    <include file="$(find-pkg-share camera)/launch/camera_with_tf.launch.py" />
+
+    <!-- Video Web Server -->
+    <node pkg="camera" exec="video_server" name="video_web_server" output="screen" />
 
     <include file="$(find-pkg-share agv_moveit_config)/launch/move_group.launch.py" />
 
-    <!-- <node pkg="rviz2" exec="rviz2" output="screen" 
-          args="-d $(var rviz_config_path)"/> -->
+    <node pkg="rviz2" exec="rviz2" output="screen" 
+          args="-d $(var rviz_config_path)"/>
 </launch>

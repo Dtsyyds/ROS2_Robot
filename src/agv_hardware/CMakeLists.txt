@@ -42,6 +42,7 @@ add_library(
   SHARED
   src/agv_hardware_interface.cpp
   src/robot_controller.cpp
+  src/agv_hardware_node.cpp
 )
 
 # 添加编译定义

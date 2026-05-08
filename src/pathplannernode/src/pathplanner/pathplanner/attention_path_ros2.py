@@ -115,8 +115,8 @@ def extract_masked_roi(original_image, mask, background_color=(0, 0, 0)):
 class InteractiveSegmentationROS2:
     """ROS2 适配的交互式分割与路径规划主类"""
     
-    def __init__(self, depth_path=None, depth_array=None, fx=498.3686770748583, 
-                 fy=501.9355502582987, cx=314.3019441792476, cy=225.6695918834769,
+    def __init__(self, depth_path=None, depth_array=None, fx=578.62, 
+                 fy=578.62, cx=321.15, cy=242.26,
                  model_path=None):
         """
         初始化交互式分割系统 - ROS2 适配版本
@@ -211,7 +211,7 @@ class InteractiveSegmentationROS2:
         self.pc_processor = PointCloudProcessor(self.fx, self.fy, self.cx, self.cy)
         self.path_generator = PathGenerator(scan_mode=default_scan, spacing=default_spacing)
         self.path_optimizer = PathOptimizer()
-        self.coord_calculator = LocalCoordinateCalculator(method='weighted')
+        self.coord_calculator = LocalCoordinateCalculator(method='jiaquan')
         self.visualizer = PathVisualizer()
         self.attention_optimizer = None
     
@@ -331,9 +331,16 @@ class InteractiveSegmentationROS2:
                 cv2.waitKey(1)
             cv2.destroyWindow("roi")
             cv2.imwrite("roi.png", roi_img)
+        result_dir = os.path.expanduser("~/pathplanner_result")
+        os.makedirs(result_dir, exist_ok=True)
+        cv2.imwrite(os.path.join(result_dir, "roi.png"), roi_img)
         
         # 2.生成彩色点云
         print(f"---3正在生成点云---")
+        
+        print(f"   original_image shape: {self.original_image.shape}")
+        print(f"   depth_map shape: {self.depth_map.shape}")
+        print(f"   current_mask shape: {self.current_mask.shape}")
         mask_resized = cv2.resize(self.current_mask.astype(np.float32),
                                   (self.original_image.shape[1], self.original_image.shape[0]))
         self.pointcloud, self.pointcloud_colors = self.pc_processor.mask_depth_to_color_pointcloud(
@@ -360,13 +367,14 @@ class InteractiveSegmentationROS2:
             return None, None, None
         
         # 5. 可视化rgb路径
-        if enable_visualization:
-            print(f"---5正在可视化路径点---")
-            self.visualizer.visualize_contour_path(
+        print(f"---✅ 路径点可视化完成---")
+        print(f"---5正在可视化路径点---")
+        self.visualizer.visualize_contour_path(
                 self.original_image, contour, self.scan_points,
                 save=True
             )
-            print(f"---✅ 路径点可视化完成---")
+        print(f"---✅ 路径点可视化完成---")
+
 
         # 6.插值
         print(f"---6正在插值路径点,两两点插值间隔: {default_InterPoins}---")
@@ -390,9 +398,7 @@ class InteractiveSegmentationROS2:
         print(f"---✅ 局部坐标系计算完成，局部坐标系数量: {len(self.local_frames)}---")
         
         # 9. 可视化点云
-        if enable_visualization:
-            print(f"---9正在可视化点云---")
-            self.visualizer.visualize_color_pointcloud(
+        self.visualizer.visualize_color_pointcloud(
                 self.pointcloud, 
                 colors=self.pointcloud_colors,
                 normals=self.normals,
@@ -400,7 +406,7 @@ class InteractiveSegmentationROS2:
                 scan_normals=self.scan_normals,
                 local_frames=self.local_frames
             )
-            print(f"---✅ 点云可视化完成---")
+        print(f"---✅ 点云可视化完成---")
         
         # 保存点云（无论是否可视化）
         self.save_pointcloud()
@@ -511,7 +517,8 @@ class InteractiveSegmentationROS2:
         self.local_frames = self.coord_calculator.compute(
             self.scan_points_3d,
             self.scan_normals,
-            self.scan_orig_indices
+            self.scan_orig_indices,
+            alpha=1.0
         )
     def local_frames_to_scan_points(self):
         """将局部坐标系转换为输出格式"""
@@ -538,8 +545,10 @@ class InteractiveSegmentationROS2:
                 pcd.normals = o3d.utility.Vector3dVector(self.normals)
             
             # 保存路径：使用绝对路径 /home/zyj/Code/pathplannernode/result/output.ply
-            result_dir = '/home/zyj/Code/pathplannernode/result'
+
+            result_dir = os.path.expanduser("~/pathplanner_result")
             os.makedirs(result_dir, exist_ok=True)
+           
             
             save_path = os.path.join(result_dir, "output.ply")
             o3d.io.write_point_cloud(save_path, pcd)

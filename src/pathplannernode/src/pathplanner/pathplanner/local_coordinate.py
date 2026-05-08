@@ -95,21 +95,21 @@ class LocalCoordinateCalculator:
         初始化计算器
         
         Args:
-            method: 计算方法 ('uniform'-统一方向，'alternate'-奇偶交替，'weighted'-加权混合)
+            method: 计算方法 ('uniform'-统一方向，'alternate'-奇偶交替，'weighted'-加权混合，'jiaquan'-加权混合改进版)
         """
         self.method = method
     
-    def compute(self, scan_points_3d, scan_normals, scan_orig_indices=None, 
+    def compute(self, scan_points_3d, scan_normals, scan_orig_indices=None,
                 alpha=0.0):
         """
         计算局部坐标系（主入口）
-        
+
         Args:
             scan_points_3d: 3D 路径点数组 (N, 3)
             scan_normals: 法向量数组 (N, 3)
             scan_orig_indices: 段索引数组
-            alpha: 加权参数（仅 weighted 方法使用）
-            
+            alpha: 加权参数（仅 weighted/jiaquan 方法使用）
+
         Returns:
             local_frames: 局部坐标系列表
         """
@@ -119,6 +119,8 @@ class LocalCoordinateCalculator:
             return self.compute_alternate(scan_points_3d, scan_normals, scan_orig_indices)
         elif self.method == 'weighted':
             return self.compute_weighted(scan_points_3d, scan_normals, scan_orig_indices, alpha)
+        elif self.method == 'jiaquan':
+            return self.compute_local_frames_jiaquan(scan_points_3d, scan_normals, scan_orig_indices, alpha)
         else:
             raise ValueError(f"未知的方法：{self.method}")
     
@@ -471,7 +473,178 @@ class LocalCoordinateCalculator:
 
         print(f"---✅ 已计算 {N} 个路径点的局部坐标系（加权混合 alpha={alpha}）---")
         return local_frames
-    
+
+    def compute_local_frames_jiaquan(self, scan_points_3d, scan_normals, scan_orig_indices=None, alpha=0.0):
+        """
+        为每个路径点计算局部坐标系（加权版）：
+          - z: 法向量（归一化）
+          - x: (1-α) * 局部投影切线 + α * 全局参考投影方向，再归一化 & 符号对齐
+          - y: z × x （右手系）
+
+        Args:
+            scan_points_3d: 3D 路径点数组 (N, 3)
+            scan_normals: 法向量数组 (N, 3)
+            scan_orig_indices: 段索引数组
+            alpha (float): 权重 ∈ [0, 1]
+                - 0.0: 完全信任局部路径走向（等价于上一版）
+                - 1.0: 完全强制统一方向（类似你最原始版本）
+                - 0.2~0.5: 推荐值，平衡自然性与一致性
+
+        """
+        if scan_points_3d is None or len(scan_points_3d) == 0:
+            print("⚠️ 路径点为空，无法计算局部坐标系")
+            return []
+
+        assert 0.0 <= alpha <= 1.0, "alpha must be in [0, 1]"
+
+        N = len(scan_points_3d)
+        points = np.array(scan_points_3d, dtype=np.float32)
+        normals = np.array(scan_normals, dtype=np.float32)
+
+        # === Step 1: 归一化法向量 ===
+        norms = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals = np.divide(normals, norms, out=np.zeros_like(normals), where=(norms != 0))
+
+        # === Step 2: 计算并投影局部切线 ===
+        raw_tangents = np.zeros_like(points)
+        if N == 1:
+            raw_tangents[0] = np.array([1.0, 0.0, 0.0])
+        else:
+            raw_tangents[0] = points[1] - points[0]
+            if(raw_tangents[0][0]<0):
+                raw_tangents[0][0]=-raw_tangents[0][0]
+            raw_tangents[-1] = points[-1] - points[-2]
+            for i in range(1, N - 1):
+                raw_tangents[i] = points[i + 1] - points[i - 1]
+            tan_norms = np.linalg.norm(raw_tangents, axis=1, keepdims=True)
+            raw_tangents = np.divide(raw_tangents, tan_norms,
+                                     out=np.zeros_like(raw_tangents),
+                                     where=(tan_norms != 0))
+        # for i in range(0, 10):     
+        #     print(f"raw_tangents[{i}]:")
+        #     print(raw_tangents[i])
+        #     print(f"points{i}:")
+        #     print(points[i])
+            
+        # 投影到切平面 → 局部自然方向
+        dot_tz = np.sum(raw_tangents * normals, axis=1, keepdims=True)
+        local_x_dir = raw_tangents - dot_tz * normals
+        # print("local_x_dir[0]:", local_x_dir[0])
+        local_x_norms = np.linalg.norm(local_x_dir, axis=1, keepdims=True)
+        local_x_dir = np.divide(local_x_dir, local_x_norms,
+                                out=np.zeros_like(local_x_dir),
+                                where=(local_x_norms > 1e-8))
+
+        # === Step 3: 构建全局参考投影方向 ===
+        # 参考方向：第一个偶数段（或首个有效点）的投影切线
+        reference_tangent = None
+        if scan_orig_indices is not None:
+            for i, idx in enumerate(scan_orig_indices):
+                if idx % 2 == 0 and np.linalg.norm(local_x_dir[i]) > 1e-6:
+                    reference_tangent = local_x_dir[i+1].copy()
+                    # [    0.99999  0.00011112  -0.0040693]
+                    # [   -0.99948   -0.032236  -0.0015641]
+                    if(reference_tangent[0]<0):
+                        reference_tangent[0]=-reference_tangent[0]
+                    break
+        if reference_tangent is None:
+            for i in range(N):
+                if np.linalg.norm(local_x_dir[i]) > 1e-6:
+                    reference_tangent = local_x_dir[i].copy()
+                    break
+        if reference_tangent is None or np.linalg.norm(reference_tangent) < 1e-6:
+            reference_tangent = np.array([1.0, 0.0, 0.0])
+
+        # 将参考方向投影到每个点的切平面（使其 ⊥ z_i）
+        dot_rz = np.sum(reference_tangent * normals, axis=1, keepdims=True)
+        global_x_dir = reference_tangent - dot_rz * normals  # shape: (N, 3)
+        global_x_norms = np.linalg.norm(global_x_dir, axis=1, keepdims=True)
+        global_x_dir = np.divide(global_x_dir, global_x_norms,
+                                 out=np.zeros_like(global_x_dir),
+                                 where=(global_x_norms > 1e-8))
+
+        # === Step 4: 【加权混合】 x = (1-α) * local + α * global ===
+        mixed_x = (1.0 - alpha) * local_x_dir + alpha * global_x_dir
+
+        # === Step 5: 符号对齐（防止因加权导致整体翻转）===
+        # 用参考方向检查整体朝向
+        mixed_x_norms = np.linalg.norm(mixed_x, axis=1, keepdims=True)
+        mixed_x = np.divide(mixed_x, mixed_x_norms,
+                            out=np.zeros_like(mixed_x),
+                            where=(mixed_x_norms > 1e-8))
+
+        dot_with_ref = np.sum(mixed_x * reference_tangent, axis=1)
+        flip_mask = dot_with_ref < 0
+        x_axes = mixed_x.copy()
+        x_axes[flip_mask] *= -1.0
+
+        # === Step 6: 处理退化（norm ≈ 0）===
+        x_norms = np.linalg.norm(x_axes, axis=1, keepdims=True)
+        degenerate_mask = (x_norms.squeeze() < 1e-6)
+        if np.any(degenerate_mask):
+            print(f"⚠️ {np.sum(degenerate_mask)} 个点需 fallback（加权后退化）")
+            for i in np.where(degenerate_mask)[0]:
+                z = normals[i]
+                # 优先尝试 local_x_dir（若有效）
+                if np.linalg.norm(local_x_dir[i]) > 1e-6:
+                    x_axes[i] = local_x_dir[i] if np.dot(local_x_dir[i], reference_tangent) >= 0 else -local_x_dir[i]
+                else:
+                    # fallback 到参考方向投影
+                    proj = reference_tangent - np.dot(reference_tangent, z) * z
+                    if np.linalg.norm(proj) > 1e-6:
+                        x_axes[i] = proj / np.linalg.norm(proj)
+                        if np.dot(x_axes[i], reference_tangent) < 0:
+                            x_axes[i] *= -1
+                    else:
+                        cand = np.cross(z, [0, 0, 1])
+                        if np.linalg.norm(cand) < 1e-6:
+                            cand = np.cross(z, [1, 0, 0])
+                        x_axes[i] = cand / np.linalg.norm(cand)
+
+        # 最终归一化
+        x_norms = np.linalg.norm(x_axes, axis=1, keepdims=True)
+        x_axes = np.divide(x_axes, x_norms, out=np.zeros_like(x_axes), where=(x_norms > 1e-8))
+
+        # === Step 7: y = z × x ===
+        y_axes = np.cross(normals, x_axes)
+        y_norms = np.linalg.norm(y_axes, axis=1, keepdims=True)
+        y_axes = np.divide(y_axes, y_norms, out=np.zeros_like(y_axes), where=(y_norms > 1e-8))
+
+        # === 存储 & 验证 ===
+        local_frames = []
+        for i in range(N):
+            frame = {
+                'origin': points[i].tolist(),
+                'x_axis': x_axes[i].tolist(),
+                'y_axis': y_axes[i].tolist(),
+                'z_axis': normals[i].tolist()
+            }
+            if scan_orig_indices is not None:
+                orig_idx = int(scan_orig_indices[i])
+                frame['orig_idx'] = orig_idx
+                frame['is_odd_segment'] = bool(orig_idx % 2 == 1)
+            local_frames.append(frame)
+
+        # 验证
+        if local_frames:
+            even_x = odd_x = None
+            for frame in local_frames:
+                if 'orig_idx' in frame:
+                    x_vec = np.array(frame['x_axis'])
+                    if even_x is None and frame['orig_idx'] % 2 == 0:
+                        even_x = x_vec
+                    if odd_x is None and frame['orig_idx'] % 2 == 1:
+                        odd_x = x_vec
+                if even_x is not None and odd_x is not None:
+                    dot_prod = np.dot(even_x, odd_x)
+                    print(f"alpha={alpha:.2f} → 偶/奇段x点积: {dot_prod:.4f}")
+                    if dot_prod < 0.95:
+                        print("⚠️ 方向一致性不足（可增大 alpha）")
+                    break
+
+        print(f"✅ 已计算 {N} 个路径点的局部坐标系（alpha={alpha}，加权混合）")
+        return local_frames
+
     def frames_to_scan_points(self, local_frames):
         """
         将局部坐标系转换为输出格式 [[x, y, z, x1,x2,x3, y1,y2,y3, nx,ny,nz], ...]
@@ -502,4 +675,3 @@ class LocalCoordinateCalculator:
             scan_points.append(o + euler.tolist())  # 3+3 = 6
         return scan_points
         
-

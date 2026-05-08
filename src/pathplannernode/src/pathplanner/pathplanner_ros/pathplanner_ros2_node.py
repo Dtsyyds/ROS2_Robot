@@ -10,8 +10,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import PointCloud2, Image, CameraInfo
 from sensor_msgs_py import point_cloud2 as pc2
 from std_msgs.msg import Header
-from geometry_msgs.msg import PointStamped, PoseArray, Pose, Point,TransformStamped
-from tf2_ros import TransformBroadcaster
+from geometry_msgs.msg import PointStamped, PoseArray, Pose, Point,TransformStamped, PoseStamped
+from tf2_geometry_msgs import do_transform_pose_stamped
 from cv_bridge import CvBridge
 import numpy as np
 import cv2
@@ -50,12 +50,12 @@ class PathPlannerROS2Node(Node):
                 ('scan_mode', 'Long'),
                 ('spacing', 10),
                 ('shrink_factor', 12),
-                ('fx', 498.3686770748583),
-                ('fy', 501.9355502582987),
-                ('cx', 314.3019441792476),
-                ('cy', 225.6695918834769),
+                ('fx', 578.62),
+                ('fy', 578.62),
+                ('cx', 321.15),
+                ('cy', 242.26),
                 ('model_path', ''),
-                ('enable_visualization', True),
+                ('enable_visualization', False),
                 ('interactive_mode', False),  # 是否启用交互模式
             ]
         )
@@ -68,11 +68,6 @@ class PathPlannerROS2Node(Node):
         self.output_cartesian_path_topic = self.get_parameter('output_cartesian_path_topic').value
         self.enable_visualization = self.get_parameter('enable_visualization').value
         self.interactive_mode = self.get_parameter('interactive_mode').value
-        # TF 广播器
-        self.tf_broadcaster = TransformBroadcaster(self)
-        
-        # 创建定时器，每 0.1 秒发布一次 TF（10Hz）
-        self.tf_timer = self.create_timer(0.1, self.publish_camera_link_tf)
         # QoS 配置
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -123,25 +118,6 @@ class PathPlannerROS2Node(Node):
             self.interactive_thread.daemon = True
             self.interactive_thread.start()
             self.get_logger().info('交互模式已启动，等待图像...')
-    def publish_camera_link_tf(self):
-        """发布 arm1_joint6 到 camera_link 的静态变换（10Hz）"""
-        t = TransformStamped()
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = 'arm1_tool_link'  # 父坐标系：机械臂末端关节
-        t.child_frame_id = 'camera_link'  # 子坐标系：相机
-        
-        # 相机位置（根据 H_Camera2Gripper 矩阵，单位转换为米）
-        t.transform.translation.x = -23.87625563651477/1000.0
-        t.transform.translation.y = -215.28082955053/1000.0
-        t.transform.translation.z = 141.7563668616137/1000.0
-        
-        # 相机姿态（根据 H_Camera2Gripper 矩阵计算的四元数）
-        t.transform.rotation.x = -0.7471245924757696
-        t.transform.rotation.y = 0.001092551759065305
-        t.transform.rotation.z = -0.006055558078383331
-        t.transform.rotation.w = 0.6646555347433197
-        
-        self.tf_broadcaster.sendTransform(t)
     def color_callback(self, msg):
         """彩色图像回调"""
         try:
@@ -308,7 +284,7 @@ class PathPlannerROS2Node(Node):
             self.get_logger().info(f'路径: {scan_points_6d[0]} ')
             
             if scan_points_3d is not None and len(scan_points_3d) > 0:
-                # 发布结果
+                # 立即发布路径
                 self.publish_3d_path(scan_points_6d)  # 直接传入6维格式数据
                 self.publish_cartesian_path(scan_points_6d)  # 发布笛卡尔路径
                 
@@ -336,24 +312,24 @@ class PathPlannerROS2Node(Node):
             
             header = Header()
             header.stamp = self.get_clock().now().to_msg()
-            header.frame_id = 'camera_link'
+            header.frame_id = 'camera_color_frame'
             
                    # 尝试获取 TF 最新变换时间戳
             try:
                 # 等待 TF 连接建立（若首次调用时缓冲区为空）
-                if not self.tf_buffer.can_transform('base_link', 'camera_link', rclpy.time.Time()):
-                    self.get_logger().info('等待 TF 变换 base_link -> camera_link ...')
+                if not self.tf_buffer.can_transform('arm2_cartesionbase_link', 'camera_color_frame', rclpy.time.Time()):
+                    self.get_logger().info('等待 TF 变换 arm2_cartesionbase_link -> camera_color_frame ...')
                     if not self.tf_buffer.wait_for_transform(
-                        'base_link', 'camera_link',
-                        self.get_clock().now().to_msg(),
+                        'arm2_cartesionbase_link', 'camera_color_frame',
+                        rclpy.time.Time(),
                         timeout=rclpy.duration.Duration(seconds=1.0)
                     ):
                         raise Exception("等待超时")
 
                 transform = self.tf_buffer.lookup_transform(
-                    'base_link',
-                    'camera_link',
-                    self.get_clock().now().to_msg(),
+                    'arm2_cartesionbase_link',
+                    'camera_color_frame',
+                    rclpy.time.Time(),
                     timeout=rclpy.duration.Duration(seconds=0.1)
                 )
                 header.stamp = transform.header.stamp
@@ -393,7 +369,7 @@ class PathPlannerROS2Node(Node):
           
             self.path_3d_pub.publish(cloud_msg)
     
-            self.get_logger().info(f'发布 3D 路径: {len(points_6d)} 个点 (格式: 6维 [x,y,z,rx,ry,rz])')
+           
             
         except Exception as e:
             self.get_logger().error(f'发布 3D 路径失败: {e}')
@@ -402,13 +378,35 @@ class PathPlannerROS2Node(Node):
         
         格式: [x, y, z, rx, ry, rz] - 位置(米)和欧拉角(弧度)
         转换为 PoseArray，姿态使用四元数表示
+        将点从相机坐标系转换到 arm2_cartesionbase_link 坐标系
+        并补偿工具坐标系偏移，使 arm2_toolscan_link 到达目标点
         """
         try:
+            # 获取 TF 变换: camera -> base
+            transform_camera_to_base = self.tf_buffer.lookup_transform(
+                'arm2_cartesionbase_link',
+                'camera_color_frame',
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.1)
+            )
+           
+
+          
+            transform_tool_to_toolscan = self.tf_buffer.lookup_transform(
+                'arm2_tool_link',   # target
+                'arm2_toolscan_link',       # source
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.1)
+            )
+           
+
             pose_array = PoseArray()
-            pose_array.header.stamp = self.get_clock().now().to_msg()
-            pose_array.header.frame_id = 'camera_link'
+            pose_array.header.stamp = transform_camera_to_base.header.stamp
+            pose_array.header.frame_id = 'arm2_cartesionbase_link'
+           
+         
             
-            for p in points_6d:
+            for idx, p in enumerate(points_6d):
                 # p = [x, y, z, rx, ry, rz]
                 # 位置从 mm 转换为 m
                 x_m = p[0] / 1000.0
@@ -418,27 +416,160 @@ class PathPlannerROS2Node(Node):
                 ry = p[4]  # 弧度
                 rz = p[5]  # 弧度
                 
-                pose = Pose()
-                pose.position.x = float(x_m)
-                pose.position.y = float(y_m)
-                pose.position.z = float(z_m)
+                # 创建 PoseStamped 在相机坐标系下
+                pose_stamped = PoseStamped()
+                pose_stamped.header.frame_id = 'camera_color_frame'
+                pose_stamped.header.stamp = transform_camera_to_base.header.stamp 
+                pose_stamped.pose.position.x = float(x_m)
+                pose_stamped.pose.position.y = float(y_m)
+                pose_stamped.pose.position.z = float(z_m)
                 
                 # 欧拉角转四元数 (ZYX 顺序: rz -> ry -> rx)
                 quaternion = self.euler_to_quaternion(rx, ry, rz)
+                pose_stamped.pose.orientation.x = quaternion[0]
+                pose_stamped.pose.orientation.y = quaternion[1]
+                pose_stamped.pose.orientation.z = quaternion[2]
+                pose_stamped.pose.orientation.w = quaternion[3]
                 
-                pose.orientation.x = quaternion[0]
-                pose.orientation.y = quaternion[1]
-                pose.orientation.z = quaternion[2]
-                pose.orientation.w = quaternion[3]
+                # 第1步: 变换到基座坐标系 (此时表示 toolscan 应该在基座坐标系下的目标位姿)
+                pose_in_base = do_transform_pose_stamped(pose_stamped, transform_camera_to_base)
                 
-                pose_array.poses.append(pose)
+                # 第2步: 计算 tool_link 的目标位姿
+              
+                pose_for_tool_link = self.compose_poses_inverse(pose_in_base.pose, transform_tool_to_toolscan.transform)
+                pose_array.poses.append(pose_for_tool_link)
             
             self.cartesian_path_pub.publish(pose_array)
-            self.get_logger().info(f'发布笛卡尔路径: {len(pose_array.poses)} 个点 (PoseArray)')
+            self.get_logger().info(f'发布笛卡尔路径: {len(pose_array.poses)} 个点 (PoseArray) 在 arm2_cartesionbase_link 坐标系下 (工具补偿已应用)')
             
         except Exception as e:
             self.get_logger().error(f'发布笛卡尔路径失败: {e}')
-
+    def compose_poses_inverse(self, pose_result, transform_b):
+        """位姿逆复合: pose_a = pose_result × inverse(transform_b)
+        
+        用于已知结果位姿和变换关系，求原始位姿。
+        
+        场景: 已知 toolscan 目标位姿 (pose_result) 和 tool->toolscan 的变换 (transform_b)，
+             求 tool_link 应该在哪里 (pose_a)
+        
+        数学: T_result = T_a × T_b  =>  T_a = T_result × inverse(T_b)
+        
+        pose_result: 结果位姿 (Pose) - 在基座坐标系下
+        transform_b: 从 pose_a 到 pose_result 的变换 (Transform)
+        返回: pose_a (Pose) - 在基座坐标系下
+        """
+        # 提取 pose_result 的位置和旋转
+        p_result = np.array([pose_result.position.x, pose_result.position.y, pose_result.position.z])
+        q_result = np.array([pose_result.orientation.x, pose_result.orientation.y, 
+                             pose_result.orientation.z, pose_result.orientation.w])
+        
+        # 提取 transform_b 的位置和旋转
+        pb = np.array([transform_b.translation.x, transform_b.translation.y, transform_b.translation.z])
+        qb = np.array([transform_b.rotation.x, transform_b.rotation.y, 
+                       transform_b.rotation.z, transform_b.rotation.w])
+        
+        # 四元数转旋转矩阵
+        def quat_to_matrix(q):
+            x, y, z, w = q
+            return np.array([
+                [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],
+                [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)],
+                [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)]
+            ])
+        
+        # 四元数共轭 (逆旋转)
+        def quat_conjugate(q):
+            return np.array([-q[0], -q[1], -q[2], q[3]])
+        
+        # 四元数乘法
+        def quat_multiply(q1, q2):
+            w1, x1, y1, z1 = q1[3], q1[0], q1[1], q1[2]
+            w2, x2, y2, z2 = q2[3], q2[0], q2[1], q2[2]
+            w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+            x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+            y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+            z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+            return np.array([x, y, z, w])
+        
+        # 计算 inverse(T_b)
+        # 旋转的逆 = 共轭
+        qb_inv = quat_conjugate(qb)
+        Rb = quat_to_matrix(qb)
+        # 平移的逆 = -R^T * p
+        pb_inv = -Rb.T @ pb
+        
+        # 计算 T_a = T_result × inverse(T_b)
+        # 旋转: q_a = q_result × qb_inv
+        q_a = quat_multiply(q_result, qb_inv)
+        
+        # 位置: p_a = R_result * pb_inv + p_result
+        R_result = quat_to_matrix(q_result)
+        p_a = R_result @ pb_inv + p_result
+        
+        # 构造结果 Pose
+        result = Pose()
+        result.position.x = p_a[0]
+        result.position.y = p_a[1]
+        result.position.z = p_a[2]
+        result.orientation.x = q_a[0]
+        result.orientation.y = q_a[1]
+        result.orientation.z = q_a[2]
+        result.orientation.w = q_a[3]
+        
+        return result
+    def compose_poses(self, pose_a, transform_b):
+        """位姿复合: pose_result = pose_a × transform_b
+        
+        pose_a: 在基座坐标系下的位姿 (Pose)
+        transform_b: 从 pose_a 的坐标系到目标坐标系的变换 (Transform)
+        返回: 复合后的位姿 (Pose)
+        
+        数学: T_result = T_a × T_b
+        位置: p_result = R_a * p_b + p_a
+        旋转: q_result = q_a × q_b (四元数乘法)
+        """
+        pb = np.array([transform_b.translation.x, transform_b.translation.y, transform_b.translation.z])
+        pa = np.array([pose_a.position.x, pose_a.position.y, pose_a.position.z])
+        qa = np.array([pose_a.orientation.x, pose_a.orientation.y, pose_a.orientation.z, pose_a.orientation.w])
+        qb = np.array([transform_b.rotation.x, transform_b.rotation.y, transform_b.rotation.z, transform_b.rotation.w])
+        
+        # 四元数转旋转矩阵
+        def quat_to_matrix(q):
+            x, y, z, w = q
+            return np.array([
+                [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],
+                [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)],
+                [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)]
+            ])
+        
+        # 四元数乘法: q_result = qa × qb
+        def quat_multiply(q1, q2):
+            w1, x1, y1, z1 = q1[3], q1[0], q1[1], q1[2]
+            w2, x2, y2, z2 = q2[3], q2[0], q2[1], q2[2]
+            w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+            x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+            y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+            z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+            return np.array([x, y, z, w])
+        
+        # 旋转平移向量
+        Ra = quat_to_matrix(qa)
+        p_result = Ra @ pb + pa
+        
+        # 四元数乘法
+        q_result = quat_multiply(qa, qb)
+        
+        # 构造结果 Pose
+        result = Pose()
+        result.position.x = p_result[0]
+        result.position.y = p_result[1]
+        result.position.z = p_result[2]
+        result.orientation.x = q_result[0]
+        result.orientation.y = q_result[1]
+        result.orientation.z = q_result[2]
+        result.orientation.w = q_result[3]
+        
+        return result
     def euler_to_quaternion(self, rx, ry, rz):
         """将欧拉角 (rx, ry, rz) 转换为四元数 [x, y, z, w]
         

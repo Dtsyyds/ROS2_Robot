@@ -4,7 +4,7 @@
 """
 import numpy as np
 from typing import Tuple, Optional
-
+import open3d as o3d
 
 class PointCloudProcessor:
     """点云处理器类"""
@@ -45,6 +45,11 @@ class PointCloudProcessor:
             return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.float32)
 
         v, u = np.where(mask_binary)
+
+        # 应急修改：强制限制尺寸
+        v = np.clip(v, 0, depth_map.shape[0] - 1)   # 行不能超过 479
+        u = np.clip(u, 0, depth_map.shape[1] - 1)   # 列不能超过 639
+        
         depths_raw = depth_map[v, u].astype(np.float32)
         depths = depths_raw * depth_scale
 
@@ -90,7 +95,62 @@ class PointCloudProcessor:
         print(f"---✅ 成功生成彩色点云：{points_3d.shape[0]} 个点---")
 
         return points_3d.astype(np.float32), colors_rgb.astype(np.float32)
-    
+    def smooth_normals(self,pcd, search_radius=20, max_nn=100, num_iterations=5):
+        """
+        平滑点云法向量的 Python 实现 (基于均值滤波)
+
+        参数:
+        pcd: open3d.geometry.PointCloud 对象
+        search_radius: 搜索半径
+        max_nn: 每个点考虑的最大邻居数量
+        num_iterations: 平滑迭代次数
+        """
+        if not pcd.has_normals():
+            print("❌ 点云没有法向量，请先估计法向量。")
+            return pcd
+
+        # 转换为 NumPy 数组以便快速操作
+        points = np.asarray(pcd.points)
+        normals = np.asarray(pcd.normals)
+
+        # 构建 KDTree
+        kdtree = o3d.geometry.KDTreeFlann(pcd)
+        n_points = len(points)
+
+        print(f"正在开始法向量平滑 (迭代次数: {num_iterations})...")
+
+        for iteration in range(num_iterations):
+            # 创建一个副本用于存储当前迭代的结果，避免原地修改干扰后续计算
+            new_normals = np.zeros_like(normals)
+
+            for i in range(n_points):
+                # 查找近邻
+                # [count, indices, distances]
+                [_, idx, _] = kdtree.search_hybrid_vector_3d(points[i], search_radius, max_nn)
+
+                if len(idx) > 0:
+                    # 提取邻居的法向量
+                    neighbor_normals = normals[idx]
+
+                    # 累加并求平均方向
+                    normal_sum = np.sum(neighbor_normals, axis=0)
+                    norm = np.linalg.norm(normal_sum)
+
+                    if norm > 1e-6:
+                        new_normals[i] = normal_sum / norm
+                    else:
+                        new_normals[i] = normals[i]  # 保持原样
+                else:
+                    new_normals[i] = normals[i]
+
+            # 更新法向量进入下一轮迭代
+            normals[:] = new_normals
+            print(f"   完成第 {iteration + 1} 次迭代")
+
+        pcd.normals = o3d.utility.Vector3dVector(normals)
+        print("✅ 法向量平滑完成")
+        return pcd
+
     def calculate_normals(self, pointcloud=None, colors=None, 
                           radius=20, max_nn=50, orientation=[0.0, 0.0, -1.0]):
         """计算点云的法向量"""
@@ -117,7 +177,7 @@ class PointCloudProcessor:
 
         # 对齐法向量方向（朝向指定方向）
         pcd.orient_normals_to_align_with_direction(orientation)
-
+        pcd = self.smooth_normals(pcd)
         # 获取法向量
         normals = np.asarray(pcd.normals)  # shape (N, 3)
         self.normals = normals

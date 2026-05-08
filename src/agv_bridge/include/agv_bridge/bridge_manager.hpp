@@ -1,7 +1,7 @@
 #pragma once
 
 #include <rclcpp/rclcpp.hpp>
-#include <geometry_msgs/msg/twist.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/header.hpp>
 #include <memory>
@@ -34,7 +34,7 @@ private:
     void cameraHeartbeatCallback(const std_msgs::msg::Header::SharedPtr msg);
 
     std::shared_ptr<rclcpp::Node> node_;
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr chassis_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr chassis_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
     
     // 订阅者 (新增)

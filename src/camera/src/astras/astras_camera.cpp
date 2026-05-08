@@ -1,6 +1,11 @@
 #include "camera/astras/astras_camera.hpp"
 
+#include <cstring>
 #include <utility>
+
+#include <rclcpp/rclcpp.hpp>
+#include <OniCTypes.h>
+#include <PS1080.h>
 
 namespace camera {
 
@@ -140,7 +145,7 @@ void AstraSCamera::StreamListener::onNewFrame(openni::VideoStream& stream) {
 /**
  * @brief 创建并启动指定传感器类型的视频流。
  *
- * - 固定配置为 640x480@30fps
+ * - 固定配置为 1280x960@30fps
  * - 根据传感器类型设置 frame_id 与 encoding
  * - 注册 StreamListener，将帧通过 FrameCallback 输出
  */
@@ -205,7 +210,7 @@ bool AstraSCamera::setupStream(openni::VideoStream& stream,
 /**
  * @brief 停止视频流并注销监听器，释放 OpenNI stream 资源。
  */
-void AstraSCamera::stopStream(openni::VideoStream& stream, openni::VideoStream::NewFrameListener* listener) {       
+void AstraSCamera::stopStream(openni::VideoStream& stream, openni::VideoStream::NewFrameListener* listener) {
     if (listener != nullptr) {
         stream.removeNewFrameListener(listener);
     }
@@ -214,6 +219,90 @@ void AstraSCamera::stopStream(openni::VideoStream& stream, openni::VideoStream::
         stream.stop();
         stream.destroy();
     }
+}
+
+/**
+ * @brief 从设备获取相机参数结构体。
+ *
+ * 使用 SDK 定义的 OBCameraParamsData 结构体（定义在 PS1080.h）：
+ * - depthRes: 深度分辨率
+ * - colorRes: 彩色分辨率
+ * - params: OBCameraParams 内参数据
+ *   - l_intr_p[4]: 左相机/深度相机内参 [fx, fy, cx, cy]
+ *   - r_intr_p[4]: 右相机/彩色相机内参 [fx, fy, cx, cy]
+ *   - l_k[5]: 左相机畸变系数 [k1, k2, p1, p2, k3]
+ *   - r_k[5]: 右相机畸变系数 [k1, k2, p1, p2, k3]
+ *
+ * 注意：需要使用 OBEXTENSION_ID_CAM_PARAMS (14) 获取参数
+ */
+static std::optional<OBCameraParams> getCameraParams(openni::Device& device) {
+    // 尝试直接使用 OBCameraParams，不使用包装结构体
+    OBCameraParams params;
+    std::memset(&params, 0, sizeof(params));
+    int data_size = sizeof(params);
+
+    openni::Status rc = device.getProperty(openni::OBEXTENSION_ID_CAM_PARAMS, &params, &data_size);
+    if (rc != openni::STATUS_OK) {
+        return std::nullopt;
+    }
+
+    return params;
+}
+
+/**
+ * @brief 获取彩色相机的内参。
+ */
+std::optional<CameraIntrinsics> AstraSCamera::getColorIntrinsics() {
+    if (!device_.isValid()) {
+        return std::nullopt;
+    }
+
+    auto params_opt = getCameraParams(device_);
+    if (!params_opt.has_value()) {
+        return std::nullopt;
+    }
+
+    const OBCameraParams& params = params_opt.value();
+    CameraIntrinsics intrinsics;
+    // Color 内参使用 r_intr_p: [fx, fy, cx, cy]
+    intrinsics.fx = static_cast<double>(params.r_intr_p[0]);
+    intrinsics.fy = static_cast<double>(params.r_intr_p[1]);
+    intrinsics.cx = static_cast<double>(params.r_intr_p[2]);
+    intrinsics.cy = static_cast<double>(params.r_intr_p[3]);
+    intrinsics.distortion_coeffs = {static_cast<double>(params.l_k[0]),
+                                    static_cast<double>(params.l_k[1]),
+                                    static_cast<double>(params.l_k[2]),
+                                    static_cast<double>(params.l_k[3]),
+                                    static_cast<double>(params.l_k[4])};
+    return intrinsics;
+}
+
+/**
+ * @brief 获取深度相机的内参。
+ */
+std::optional<CameraIntrinsics> AstraSCamera::getDepthIntrinsics() {
+    if (!device_.isValid()) {
+        return std::nullopt;
+    }
+
+    auto params_opt = getCameraParams(device_);
+    if (!params_opt.has_value()) {
+        return std::nullopt;
+    }
+
+    const OBCameraParams& params = params_opt.value();
+    CameraIntrinsics intrinsics;
+    // Depth 内参使用 l_intr_p: [fx, fy, cx, cy]
+    intrinsics.fx = static_cast<double>(params.l_intr_p[0]);
+    intrinsics.fy = static_cast<double>(params.l_intr_p[1]);
+    intrinsics.cx = static_cast<double>(params.l_intr_p[2]);
+    intrinsics.cy = static_cast<double>(params.l_intr_p[3]);
+    intrinsics.distortion_coeffs = {static_cast<double>(params.r_k[0]),
+                                    static_cast<double>(params.r_k[1]),
+                                    static_cast<double>(params.r_k[2]),
+                                    static_cast<double>(params.r_k[3]),
+                                    static_cast<double>(params.r_k[4])};
+    return intrinsics;
 }
 
 } 

@@ -12,7 +12,7 @@ namespace agv_hardware {
 struct AgvConfig {
     // ==================== 机器人网络配置 ====================
     /// @brief 机器人控制器 IP 地址
-    std::string robot_ip = "192.168.1.159";
+    std::string robot_ip = "192.168.1.158";
     
     /// @brief 底盘控制 IP 地址
     std::string chassis_ip = "192.168.1.109";

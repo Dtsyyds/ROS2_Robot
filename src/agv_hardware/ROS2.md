@@ -449,6 +449,41 @@
         ]
     }
 }
+
+{
+    "header": {
+        "robot_id": "mobile_dual_arm_robot",
+        "msg_type": "response"
+    },
+    "payload": {
+        "arms": [
+            {
+                "arm_id": "left_arm",
+                "parameters": {
+                    "val1": 0.2,
+                    "val2": 0.1,
+                    "val3": 0.3,
+                    "val4": 0.0,
+                    "val5": 0.5,
+                    "val6": 0.0,
+                    "speed": 45
+                }
+            },
+            {
+                "arm_id": "right_arm",
+                "parameters": {
+                    "val1": -0.2,
+                    "val2": 0.1,
+                    "val3": 0.25,
+                    "val4": 0.0,
+                    "val5": -0.5,
+                    "val6": 0.0,
+                    "speed": 45
+                }
+            }
+        ]
+    }
+}
 ```
 
 响应：下位机 -> 上位机

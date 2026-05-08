@@ -6,6 +6,11 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(agv_protocol REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system thread)
+find_package(OpenSSL REQUIRED)
 
 # 添加包含目录
 include_directories(include)
@@ -20,7 +25,21 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   geometry_msgs
   std_msgs
+  nav_msgs
+  sensor_msgs
 )
+
+# 创建独立 WebSocket 桥接节点
+add_executable(websocket_bridge_node src/websocket_bridge_node.cpp)
+target_link_libraries(websocket_bridge_node 
+  ${PROJECT_NAME} 
+  agv_protocol::agv_protocol
+  Boost::system
+  Boost::thread
+  OpenSSL::SSL
+  OpenSSL::Crypto
+)
+ament_target_dependencies(websocket_bridge_node rclcpp geometry_msgs std_msgs nav_msgs sensor_msgs)
 
 # 导出头文件
 install(DIRECTORY include/ DESTINATION include)
@@ -30,13 +49,25 @@ install(TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
-  RUNTIME DESTINATION bin
   INCLUDES DESTINATION include
+)
+
+# 安装可执行文件（不导出）
+install(TARGETS websocket_bridge_node
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 # 导出 cmake 配置以便其他包使用
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
 ament_export_targets(export_${PROJECT_NAME})
+ament_export_dependencies(
+  rclcpp 
+  geometry_msgs 
+  std_msgs 
+  nav_msgs 
+  sensor_msgs 
+  agv_protocol
+)
 
 ament_package()

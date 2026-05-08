@@ -16,7 +16,7 @@ void BridgeManager::init(std::shared_ptr<rclcpp::Node> node) {
 
 void BridgeManager::setupPublishers() {
     if (!node_) return;
-    chassis_pub_ = node_->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
+    chassis_pub_ = node_->create_publisher<std_msgs::msg::Float64MultiArray>("cmd_vel", 10);
     status_pub_ = node_->create_publisher<std_msgs::msg::String>("robot_status", 10);
 }
 
@@ -63,8 +63,8 @@ bool BridgeManager::isCameraOnline() {
 void BridgeManager::publishChassisCmd(double vx, double vy, double wz) {
     auto& instance = getInstance();
     if (!instance.chassis_pub_) return;
-    auto msg = geometry_msgs::msg::Twist();
-    msg.linear.x = vx; msg.linear.y = vy; msg.angular.z = wz;
+    auto msg = std_msgs::msg::Float64MultiArray();
+    msg.data = {vx, vy, wz};
     instance.chassis_pub_->publish(msg);
 }
 
