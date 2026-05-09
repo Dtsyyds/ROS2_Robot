@@ -1,6 +1,6 @@
 # AGV ROS2 Control Manager
 
-基于 ROS 2 的 AGV（自动导引车）多机器人控制平台，支持双机械臂、底盘运动、视觉感知、路径规划和 MoveIt 运动规划等功能。通过 WebSocket 协议实现远程控制端（Unity 3D / Web 前端）与本地 ROS2 系统的实时通信。
+基于 ROS 2 的 AGV（自动导引车）多机器人控制平台，支持双机械臂、底盘运动、视觉感知、路径规划和 MoveIt 运动规划等功能。通过 WebSocket 协议实现远程控制端（Web 前端）与本地 ROS2 系统的实时通信。
 
 ## 📋 目录
 
@@ -140,8 +140,8 @@
 
 | 参数名 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `server_ip` | string | `"127.0.0.1"` | WebSocket 服务器地址 |
-| `server_port` | int | `8765` | WebSocket 服务器端口 |
+| `server_ip` | string | `"192.168.1.101"` | WebSocket 服务器地址 |
+| `server_port` | int | `9100` | WebSocket 服务器端口 |
 | `report_interval` | double | `1.0` | 状态上报间隔（秒） |
 
 **ROS2 话题**:
@@ -156,7 +156,7 @@
 
 **启动方式**:
 ```bash
-ros2 run agv_bridge websocket_bridge_node --ros-args -p server_ip:=192.168.1.100 -p server_port:=8765
+ros2 run agv_bridge websocket_bridge_node --ros-args -p server_ip:=192.168.1.100 -p server_port:=9100
 ```
 
 **依赖**: `agv_protocol`, `rclcpp`, `geometry_msgs`, `nav_msgs`, `sensor_msgs`, `std_msgs`, `Boost`, `OpenSSL`
@@ -208,7 +208,6 @@ ros2 run agv_bridge websocket_bridge_node --ros-args -p server_ip:=192.168.1.100
 **配置**: 编辑 `include/agv_hardware/config.hpp` 中的 `AgvConfig` 结构体：
 ```cpp
 robot_ip = "192.168.1.159";  // 珞石机械臂 IP
-server_uri = "ws://192.168.1.100:8765";  // WebSocket 服务器地址
 ```
 
 **依赖**: `rclcpp`, `rclcpp_lifecycle`, `hardware_interface`, `pluginlib`, `agv_protocol`, `agv_bridge`, `tf2_ros`, `jsoncpp`, `boost`
@@ -562,13 +561,14 @@ ros2 launch camera camera_with_tf.launch.py
 
 ### 系统要求
 
-- **操作系统**: Ubuntu 22.04 LTS
-- **ROS 2 版本**: Humble Hawksbill
+- **操作系统**: Ubuntu 24.04 LTS
+- **ROS 2 版本**: Jazzy
 - **编译工具**: colcon, CMake >= 3.8
 
-### 安装 ROS 2 Humble
+### 安装 ROS 2 Jazzy
 
 ```bash
+# 建议参考鱼香ros的一键安装脚本
 # 添加 ROS 2 apt 源
 sudo apt update && sudo apt install software-properties-common
 sudo add-apt-repository universe
@@ -577,7 +577,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-a
 
 # 安装 ROS 2 Humble
 sudo apt update
-sudo apt install ros-humble-desktop
+sudo apt install ros-jazzy-desktop
 
 # 安装开发工具
 sudo apt install python3-colcon-common-extensions python3-rosdep
@@ -587,23 +587,10 @@ sudo apt install python3-colcon-common-extensions python3-rosdep
 
 ```bash
 # 安装 MoveIt 2
-sudo apt install ros-humble-moveit
+sudo apt install ros-jazzy-moveit
 
 # 安装 ros2_control
-sudo apt install ros-humble-ros2-control ros-humble-ros2-controllers
-
-# 安装其他依赖
-sudo apt install \
-    libboost-all-dev \
-    libssl-dev \
-    libjsoncpp-dev \
-    ros-humble-tf2-ros \
-    ros-humble-tf2-geometry-msgs \
-    ros-humble-cv-bridge \
-    ros-humble-image-transport \
-    ros-humble-xacro \
-    ros-humble-robot-state-publisher \
-    ros-humble-joint-state-publisher-gui
+sudo apt install ros-jazzy-ros2-control ros-jazzy-ros2-controllers
 
 # Python 依赖
 pip3 install open3d numpy scipy
@@ -617,11 +604,11 @@ pip3 install open3d numpy scipy
 
 ```bash
 # 克隆仓库
-git clone https://github.com/Dtsyyds/AGV_ROS2_Control_Manager.git
-cd AGV_ROS2_Control_Manager
+git clone https://github.com/Dtsyyds/ROS2_Robot.git
+cd ROS2_Robot
 
 # source ROS 2
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 
 # 编译（跳过第三方包以加速）
 colcon build --symlink-install --packages-skip realsense-ros moveit2_calibration
@@ -636,6 +623,9 @@ colcon build --symlink-install
 # source 工作空间
 source install/setup.bash
 
+# 基础用法：搭配上位机启动完整系统
+ros2 run agv_bridge websocket_bridge_node
+
 # 方式 1：启动完整系统
 ros2 launch agv_bringup agv.launch.xml
 
@@ -643,7 +633,7 @@ ros2 launch agv_bringup agv.launch.xml
 # 启动 WebSocket 桥接节点
 ros2 run agv_bridge websocket_bridge_node --ros-args \
     -p server_ip:=192.168.1.100 \
-    -p server_port:=8765 \
+    -p server_port:=9100 \
     -p report_interval:=1.0
 
 # 启动 MoveIt 演示
@@ -693,7 +683,7 @@ cd /home/dts/agv_git
 git init
 
 # 添加远程仓库
-git remote add origin https://github.com/你的用户名/AGV_ROS2_Control_Manager.git
+git remote add origin https://github.com/你的用户名/ROS2_Robot.git
 
 # 添加所有文件到暂存区
 git add .
@@ -879,15 +869,9 @@ AGV_ROS2_Control_Manager/
 ```
 
 ---
-
-## 许可证
-
-- 主要功能包: Apache License 2.0
-- MoveIt 配置: BSD-3-Clause
-- 第三方包遵循各自许可证
-
 ## 维护者
 
 - **dts** — 主要开发者
 - **zhuchen** — 硬件接口与 MoveIt 配置
-- **zyj** — 相机驱动
+- **zyj** — 路径规划
+- **jzg** — 吸附机器人开发
