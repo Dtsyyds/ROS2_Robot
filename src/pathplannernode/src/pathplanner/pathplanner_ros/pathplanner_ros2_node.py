@@ -47,7 +47,7 @@ class PathPlannerROS2Node(Node):
                 ('click_point_topic', '/click_point'),
                 ('output_3d_path_topic', '/path_planner/path_3d'),
                 ('output_cartesian_path_topic', '/path_planner/cartesian_path'),
-                ('scan_mode', 'Long'),
+                ('scan_mode', 'Short'),
                 ('spacing', 10),
                 ('shrink_factor', 12),
                 ('fx', 578.62),
